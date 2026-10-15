@@ -1,7 +1,7 @@
 {
   "name": "mcl-stickwar",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Estrategia en tiempo real de lado a lado, al estilo de Stick War: mina oro, entrena tu ejército y derriba la estatua enemiga.",
   "type": "module",
   "scripts": {

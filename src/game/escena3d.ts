@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { liberar } from '../rendimiento';
 import type { TipoUnidad } from '../core/unidades';
 import { animateWalk, createAvatar, DEFAULT_LOOK, type Look } from './characters';
 import { Batalla, type Estatua, type Lado, type Unidad } from './batalla';
@@ -88,6 +90,32 @@ interface Modelo {
   saco?: THREE.Mesh;
 }
 
+/** Fusiona por material las mallas estáticas de un grupo. */
+function fusionar(grupo: THREE.Group) {
+  grupo.updateMatrixWorld(true);
+  const lotes = new Map<string, { material: THREE.Material; sombra: boolean; geos: THREE.BufferGeometry[] }>();
+  grupo.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh || Array.isArray(m.material)) return;
+    const g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
+    g.applyMatrix4(m.matrixWorld);
+    const clave = `${m.material.uuid}|${m.castShadow}`;
+    if (!lotes.has(clave)) lotes.set(clave, { material: m.material, sombra: m.castShadow, geos: [] });
+    lotes.get(clave)!.geos.push(g);
+  });
+  liberar(grupo);
+  grupo.clear();
+  for (const { material, sombra, geos } of lotes.values()) {
+    const unida = mergeGeometries(geos);
+    for (const g of geos) g.dispose();
+    if (!unida) continue;
+    const malla = new THREE.Mesh(unida, material);
+    malla.castShadow = sombra;
+    malla.receiveShadow = true;
+    grupo.add(malla);
+  }
+}
+
 class Reserva {
   private lista: THREE.Object3D[] = [];
   private usadas = 0;
@@ -123,6 +151,9 @@ export class Escena3D {
   private estrellas: THREE.Points;
   private lookActual = '';
   private vector = new THREE.Vector3();
+  private cieloClaro = new THREE.Color(0x9fd3f5);
+  private cieloOscuro = new THREE.Color(0x000000);
+  private tamSombras = -1;
 
   constructor(lienzo: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas: lienzo, antialias: true });
@@ -160,6 +191,23 @@ export class Escena3D {
 
   private sol: THREE.DirectionalLight;
 
+  /** Tamaño del mapa de sombras según la calidad (0 = sin sombras). Solo cambia el estado si cambia. */
+  sombras(tam: number) {
+    if (tam === this.tamSombras) return;
+    this.tamSombras = tam;
+    this.renderer.shadowMap.enabled = tam > 0;
+    if (tam > 0) {
+      // Escena muy ancha: el mapa es el doble de ancho que de alto.
+      this.sol.shadow.mapSize.set(tam, tam / 2);
+      this.sol.shadow.map?.dispose();
+      this.sol.shadow.map = null;
+    }
+    this.escena.traverse((o) => {
+      const m = (o as THREE.Mesh).material as THREE.Material | undefined;
+      if (m) m.needsUpdate = true;
+    });
+  }
+
   ajustar(ancho: number, alto: number, dpr: number) {
     this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(ancho, alto, false);
@@ -168,38 +216,47 @@ export class Escena3D {
   }
 
   private construir(b: Batalla, look: Look) {
+    liberar(this.mundo);
     this.mundo.clear();
-    for (const m of this.modelos.values()) this.escena.remove(m.grupo);
+    for (const m of this.modelos.values()) {
+      this.escena.remove(m.grupo);
+      liberar(m.grupo);
+    }
     this.modelos.clear();
     this.estatuas.clear();
     const L = b.largo;
+    // Decorado fijo: se fusiona por material al final (pocas llamadas de dibujo).
+    const fijo = new THREE.Group();
 
     const suelo = malla(new THREE.BoxGeometry(L + 80, 1, 16), mat(0x5b8c3a), L / 2, -0.5, 0);
-    this.mundo.add(suelo);
+    fijo.add(suelo);
     // Camino de tierra por el que marchan los ejércitos.
-    this.mundo.add(malla(new THREE.BoxGeometry(L + 20, 0.02, 4.6), mat(0x8d7650), L / 2, 0.01, 0));
+    fijo.add(malla(new THREE.BoxGeometry(L + 20, 0.02, 4.6), mat(0x8d7650), L / 2, 0.01, 0));
     // Colinas y árboles al fondo.
     for (let x = -30; x < L + 40; x += 9) {
       const alto = 5 + ((x * 37) % 9);
-      this.mundo.add(malla(new THREE.ConeGeometry(9 + ((x * 13) % 5), alto, 7), mat(0x3f6b2a), x, alto / 2 - 0.5, -22 - ((x * 7) % 6)));
+      fijo.add(malla(new THREE.ConeGeometry(9 + ((x * 13) % 5), alto, 7), mat(0x3f6b2a), x, alto / 2 - 0.5, -22 - ((x * 7) % 6)));
     }
     for (let x = -10; x < L + 10; x += 6.5) {
       const z = -8 - ((x * 11) % 4);
-      this.mundo.add(malla(new THREE.CylinderGeometry(0.2, 0.3, 1.4, 6), mat(0x5d4037), x, 0.7, z));
-      this.mundo.add(malla(new THREE.ConeGeometry(1.2, 2.6, 7), mat(0x2e5d2a), x, 2.4, z));
+      fijo.add(malla(new THREE.CylinderGeometry(0.2, 0.3, 1.4, 6), mat(0x5d4037), x, 0.7, z));
+      fijo.add(malla(new THREE.ConeGeometry(1.2, 2.6, 7), mat(0x2e5d2a), x, 2.4, z));
     }
 
     // Minas de oro.
     for (const x of [...b.jugador.minas, ...b.enemigo.minas]) {
       const roca = malla(new THREE.DodecahedronGeometry(1.2, 0), mat(0x6d6d6d), x, 0.7, -3.2);
       roca.scale.set(1.2, 0.8, 1);
-      this.mundo.add(roca);
+      fijo.add(roca);
       for (let k = 0; k < 5; k++) {
         const oro = malla(new THREE.OctahedronGeometry(0.28), mat(0xffd54f, false, 0x8a6d00), x - 0.9 + k * 0.45, 1.1 + (k % 2) * 0.3, -2.4);
         oro.rotation.y = k;
-        this.mundo.add(oro);
+        fijo.add(oro);
       }
     }
+
+    fusionar(fijo);
+    this.mundo.add(fijo);
 
     // Estatuas: un avatar enorme sobre un pedestal, mirando al campo de batalla.
     for (const e of [b.jugador, b.enemigo]) {
@@ -256,15 +313,14 @@ export class Escena3D {
   }
 
   /** `camX` es el centro de la vista; `oscuro` usa cielo negro con estrellas (AMOLED). */
-  dibujar(b: Batalla, look: Look, camX: number, oscuro: boolean, efectos: boolean) {
+  dibujar(b: Batalla, look: Look, camX: number, oscuro: boolean) {
     const clave = JSON.stringify(look);
     if (b !== this.batallaActual || clave !== this.lookActual) {
       this.lookActual = clave;
       this.construir(b, look);
     }
-    this.escena.background = new THREE.Color(oscuro ? 0x000000 : 0x9fd3f5);
+    this.escena.background = oscuro ? this.cieloOscuro : this.cieloClaro;
     this.estrellas.visible = oscuro;
-    this.renderer.shadowMap.enabled = efectos;
 
     this.camara.position.set(camX, 7.5, 24);
     this.camara.lookAt(camX, 1.8, 0);
@@ -275,6 +331,7 @@ export class Escena3D {
     for (const [u, m] of this.modelos) {
       if (!vivas.has(u)) {
         this.escena.remove(m.grupo);
+        liberar(m.grupo);
         this.modelos.delete(u);
       }
     }

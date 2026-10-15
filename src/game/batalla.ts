@@ -72,6 +72,8 @@ const esUnidad = (o: Unidad | Estatua): o is Unidad => 'tipo' in o;
 export class Batalla {
   readonly largo: number;
   unidades: Unidad[] = [];
+  /** Unidades vivas por bando, rehechas una vez por paso (en vez de filtrar en cada búsqueda). */
+  private vivas: Record<Lado, Unidad[]> = { jugador: [], enemigo: [] };
   proyectiles: Proyectil[] = [];
   jugador: Ejercito;
   enemigo: Ejercito;
@@ -114,7 +116,10 @@ export class Batalla {
 
   poblacion(lado: Lado): number {
     const e = this.ejercito(lado);
-    return this.unidades.filter((u) => u.viva && u.lado === lado).reduce((a, u) => a + UNIDADES[u.tipo].poblacion, 0) + e.cola.reduce((a, c) => a + UNIDADES[c.tipo].poblacion, 0);
+    let total = 0;
+    for (const u of this.unidades) if (u.viva && u.lado === lado) total += UNIDADES[u.tipo].poblacion;
+    for (const c of e.cola) total += UNIDADES[c.tipo].poblacion;
+    return total;
   }
 
   disponible(tipo: TipoUnidad): boolean {
@@ -165,6 +170,9 @@ export class Batalla {
       }
       this.actualizarEstatua(e.estatua, dt);
     }
+    this.vivas.jugador.length = 0;
+    this.vivas.enemigo.length = 0;
+    for (const u of this.unidades) if (u.viva) this.vivas[u.lado].push(u);
     this.decisionIA -= dt;
     if (this.decisionIA <= 0) {
       this.decisionIA = 1;
@@ -193,8 +201,9 @@ export class Batalla {
     }
   }
 
-  private enemigosDe(lado: Lado) {
-    return this.unidades.filter((u) => u.viva && u.lado !== lado);
+  /** Enemigos de un bando. Puede incluir alguno que murió en este mismo paso: se comprueba `viva` al usarlo. */
+  private enemigosDe(lado: Lado): Unidad[] {
+    return this.vivas[lado === 'jugador' ? 'enemigo' : 'jugador'];
   }
 
   private actualizarEstatua(s: Estatua, dt: number) {
@@ -205,6 +214,7 @@ export class Batalla {
     let objetivo: Unidad | null = null;
     let d = 13;
     for (const u of this.enemigosDe(s.lado)) {
+      if (!u.viva) continue;
       const dist = Math.abs(u.x - s.x);
       if (dist < d) {
         d = dist;
@@ -227,7 +237,7 @@ export class Batalla {
       u.carga = 0;
     }
     // Peligro: un enemigo cerca y por delante del minero (los que ya pasaron de largo no cuentan).
-    const peligro = this.enemigosDe(u.lado).some((o) => Math.abs(o.x - u.x) < 6 && (o.x - u.x) * dir > -1.5);
+    const peligro = this.enemigosDe(u.lado).some((o) => o.viva && Math.abs(o.x - u.x) < 6 && (o.x - u.x) * dir > -1.5);
     u.huida = peligro ? 2 : Math.max(0, u.huida - dt);
     if (e.orden === 'guarnicion' || u.huida > 0) {
       if (this.caminarHacia(u, refugio, dt, 0.4)) u.estado = 'quieto';
@@ -280,6 +290,7 @@ export class Batalla {
     let objetivo: Unidad | Estatua | null = null;
     let dist = Infinity;
     for (const o of this.enemigosDe(u.lado)) {
+      if (!o.viva) continue;
       const dd = Math.abs(o.x - u.x);
       // Defendiendo, no persiguen más allá de unos metros de la línea.
       if (e.orden === 'defender' && (o.x - linea) * dir > 10) continue;
@@ -319,7 +330,7 @@ export class Batalla {
 
   private golpear(lado: Lado, objetivo: Unidad | Estatua, dano: number, area: number) {
     if (area > 0) {
-      for (const o of this.enemigosDe(lado)) if (Math.abs(o.x - objetivo.x) <= area) this.herir(o, dano);
+      for (const o of this.enemigosDe(lado)) if (o.viva && Math.abs(o.x - objetivo.x) <= area) this.herir(o, dano);
       const estatua = this.ejercito(lado === 'jugador' ? 'enemigo' : 'jugador').estatua;
       if (Math.abs(estatua.x - objetivo.x) <= area + 2.5) this.herir(estatua, dano);
     } else this.herir(objetivo, dano);

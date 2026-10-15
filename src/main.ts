@@ -7,18 +7,23 @@ import { iniciarBucle } from './core/loop';
 import { ORDEN_UNIDADES, POBLACION_MAX, UNIDADES, type TipoUnidad } from './core/unidades';
 import { iniciarPantallaCompleta } from './fullscreen';
 import { Batalla, type Orden } from './game/batalla';
-import { Escena3D } from './game/escena3d';
+import type { Escena3D } from './game/escena3d';
+import { Rendimiento, tamanoSombras } from './rendimiento';
 import { agregarRecord, limpiarNombre } from './storage';
 import { panelConfiguracion } from './ui/configuracion';
 import { boton, h, mostrarPanel } from './ui/dom';
-import { pantallaPersonaje } from './ui/personaje';
 
 const hud = document.getElementById('lienzo') as HTMLCanvasElement;
 const ctx = hud.getContext('2d')!;
 const lienzo3d = document.createElement('canvas');
 lienzo3d.id = 'lienzo3d';
 hud.before(lienzo3d);
-const escena = new Escena3D(lienzo3d);
+let escena: Escena3D | null = null;
+/** El motor 3D (three.js) se descarga aparte: el menú aparece sin esperarlo. */
+let modulo3d: Promise<typeof import('./game/escena3d')> | null = null;
+const cargar3d = () => (modulo3d ??= import('./game/escena3d'));
+/** Calidad automática, límite de FPS y monitor `?perf`. */
+const rend = new Rendimiento(() => app.g.config.calidad, () => app.g.config.limiteFps, () => ajustar());
 
 let batalla: Batalla | null = null;
 let camX = 20;
@@ -39,7 +44,7 @@ function ajustar() {
   hud.width = Math.round(ancho * dpr);
   hud.height = Math.round(alto * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  escena.ajustar(ancho, alto, Math.min(dpr, 1.5));
+  escena?.ajustar(ancho, alto, rend.ratio);
 }
 addEventListener('resize', ajustar);
 ajustar();
@@ -181,7 +186,7 @@ function menu() {
       boton(max > 1 ? `Continuar en el nivel ${max}` : 'Jugar', () => jugar(max), { variante: 'primario', icono: '▶' }),
       max > 1 ? boton('Empezar desde el nivel 1', () => jugar(1), { icono: '⏮' }) : null,
       boton(`Dificultad: ${MODOS[app.g.config.dificultad].nombre}`, () => configuracion(), { icono: '🎯' }),
-      boton('Personaje', () => pantallaPersonaje(menu), { icono: '👕' }),
+      boton('Personaje', () => void import('./ui/personaje').then((m) => m.pantallaPersonaje(menu)), { icono: '👕' }),
       boton('Récords', records, { icono: '🏆' }),
       boton('Configuración', () => configuracion(), { icono: '⚙️' }),
       h('p', { class: 'texto-suave ayuda-texto', text: AYUDA }),
@@ -205,8 +210,13 @@ function records() {
   mostrarPanel(h('div', { class: 'tarjeta' }, h('h2', { text: '🏆 Récords' }), ...filas, boton('Volver', menu, { icono: '←' })));
 }
 
-function jugar(nivel: number) {
+async function jugar(nivel: number) {
   audio.iniciar();
+  if (!escena) {
+    const { Escena3D } = await cargar3d();
+    escena = new Escena3D(lienzo3d);
+    ajustar();
+  }
   batalla = new Batalla(nivel, () => MODOS[app.g.config.dificultad], {
     golpe: () => undefined,
     muerte: (u) => u.lado === 'enemigo' && audio.efecto('golpe'),
@@ -341,7 +351,7 @@ function dibujarHud(b: Batalla) {
   // Vida de las unidades heridas.
   for (const u of b.unidades) {
     if (!u.viva || u.vida >= u.vidaMax) continue;
-    const p = escena.proyectar(u.x, u.tipo === 'gigante' ? 4.4 : 2.1, u.z, ancho, alto);
+    const p = escena!.proyectar(u.x, u.tipo === 'gigante' ? 4.4 : 2.1, u.z, ancho, alto);
     if (!p.visible || p.x < -20 || p.x > ancho + 20) continue;
     ctx.fillStyle = '#000';
     ctx.fillRect(p.x - 13, p.y - 1, 26, 5);
@@ -358,20 +368,25 @@ let fps = 60;
 let ultimo = performance.now();
 let refresco = 0;
 iniciarBucle(
-  (dt) => {
-    if (!batalla || batalla.pausada) return;
-    const v = (teclas.has('KeyA') || teclas.has('ArrowLeft') ? -1 : 0) + (teclas.has('KeyD') || teclas.has('ArrowRight') ? 1 : 0);
-    camX += v * 28 * dt;
-    camX = Math.max(12, Math.min(batalla.largo - 12, camX));
-    batalla.actualizar(dt);
-  },
+  (dt) =>
+    rend.medir('logica', () => {
+      if (!batalla || batalla.pausada) return;
+      const v = (teclas.has('KeyA') || teclas.has('ArrowLeft') ? -1 : 0) + (teclas.has('KeyD') || teclas.has('ArrowRight') ? 1 : 0);
+      camX += v * 28 * dt;
+      camX = Math.max(12, Math.min(batalla.largo - 12, camX));
+      batalla.actualizar(dt);
+    }),
   () => {
     const ahora = performance.now();
+    if (!rend.debeDibujar(ahora, !batalla || batalla.pausada)) return;
     const dt = Math.min(0.1, (ahora - ultimo) / 1000);
     fps = fps * 0.9 + (1 / Math.max(0.001, dt)) * 0.1;
     ultimo = ahora;
-    if (batalla) {
-      escena.dibujar(batalla, app.g.look, camX, app.g.config.tema === 'oscuro', !app.g.config.animacionesReducidas);
+    if (batalla && escena) {
+      const e = escena;
+      const b = batalla;
+      e.sombras(app.g.config.animacionesReducidas ? 0 : tamanoSombras(app.g.config.calidad));
+      rend.medir('render', () => e.dibujar(b, app.g.look, camX, app.g.config.tema === 'oscuro'));
       dibujarHud(batalla);
       refresco -= dt;
       if (refresco <= 0) {
@@ -387,13 +402,17 @@ iniciarBucle(
       ctx.font = '11px monospace';
       ctx.fillText(`${Math.round(fps)} FPS`, 8, alto - 8);
     }
+    rend.actualizarMonitor(escena?.renderer ?? null);
   },
 );
 
-if (import.meta.env.DEV && location.search.includes('demo')) jugar(Number(new URLSearchParams(location.search).get('nivel')) || 4);
+if (import.meta.env.DEV && location.search.includes('demo')) void jugar(Number(new URLSearchParams(location.search).get('nivel')) || 4);
 else if (app.g.nombre) menu();
 else bienvenida();
 
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => undefined));
 }
+
+// Con el menú ya visible, se descarga el motor 3D en segundo plano para que «Jugar» sea instantáneo.
+addEventListener('load', () => setTimeout(() => void cargar3d(), 800));
