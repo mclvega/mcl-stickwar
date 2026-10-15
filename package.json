@@ -1,0 +1,22 @@
+{
+  "name": "mcl-stickwar",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Estrategia en tiempo real de lado a lado, al estilo de Stick War: mina oro, entrena tu ejército y derriba la estatua enemiga.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/three": "^0.186.0",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.4"
+  },
+  "dependencies": {
+    "three": "^0.186.1"
+  }
+}
