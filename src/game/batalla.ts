@@ -18,6 +18,8 @@ export interface Unidad {
   estado: 'caminar' | 'quieto' | 'atacar' | 'minar' | 'volver';
   carga: number;
   minando: number;
+  /** Segundos que un minero sigue refugiado tras ver peligro (evita que tiemble en el borde). */
+  huida: number;
   /** Segundos desde el último golpe (para animar). */
   golpe: number;
   moviendose: boolean;
@@ -140,7 +142,7 @@ export class Batalla {
     const vida = d.vida * (lado === 'enemigo' ? this.modoNivel.vidaEnemigo * (1 + (this.nivel - 1) * 0.06) : 1);
     const u: Unidad = {
       id: this.siguienteId++, tipo, lado, x: e.estatua.x + Batalla.direccion(lado) * 2, z: (this.rng.siguiente() - 0.5) * 3.2,
-      vida, vidaMax: vida, cd: this.rng.siguiente(), estado: 'caminar', carga: 0, minando: 0, golpe: 9, moviendose: false, muerteT: 0, viva: true,
+      vida, vidaMax: vida, cd: this.rng.siguiente(), estado: 'caminar', carga: 0, minando: 0, huida: 0, golpe: 9, moviendose: false, muerteT: 0, viva: true,
     };
     this.unidades.push(u);
     return u;
@@ -216,10 +218,19 @@ export class Batalla {
 
   private actualizarMinero(u: Unidad, dt: number) {
     const e = this.ejercito(u.lado);
-    const casa = e.estatua.x + Batalla.direccion(u.lado) * 1.5;
-    const peligro = this.enemigosDe(u.lado).some((o) => Math.abs(o.x - u.x) < 5);
-    if (e.orden === 'guarnicion' || peligro) {
-      this.caminarHacia(u, casa, dt);
+    const dir = Batalla.direccion(u.lado);
+    const casa = e.estatua.x + dir * 1.5;
+    const refugio = e.estatua.x - dir * 2.5;
+    // Al pasar junto a la estatua entrega el oro que lleva (también si va huyendo).
+    if (u.carga > 0 && Math.abs(u.x - e.estatua.x) < 3) {
+      e.oro += u.carga * (u.lado === 'enemigo' ? this.modoNivel.oroEnemigo : 1);
+      u.carga = 0;
+    }
+    // Peligro: un enemigo cerca y por delante del minero (los que ya pasaron de largo no cuentan).
+    const peligro = this.enemigosDe(u.lado).some((o) => Math.abs(o.x - u.x) < 6 && (o.x - u.x) * dir > -1.5);
+    u.huida = peligro ? 2 : Math.max(0, u.huida - dt);
+    if (e.orden === 'guarnicion' || u.huida > 0) {
+      if (this.caminarHacia(u, refugio, dt, 0.4)) u.estado = 'quieto';
       return;
     }
     const mina = e.minas[u.id % e.minas.length];
@@ -233,12 +244,10 @@ export class Batalla {
           u.minando = 0;
         }
       }
-    } else if (this.caminarHacia(u, casa, dt)) {
-      e.oro += u.carga * (u.lado === 'enemigo' ? this.modoNivel.oroEnemigo : 1);
-      u.carga = 0;
+    } else {
+      this.caminarHacia(u, casa, dt);
     }
   }
-
   /** Devuelve true al llegar. */
   private caminarHacia(u: Unidad, x: number, dt: number, margen = 0.3): boolean {
     const dx = x - u.x;

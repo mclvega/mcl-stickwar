@@ -28,6 +28,26 @@ describe('economía', () => {
     expect(b.poblacion('jugador')).toBeLessThanOrEqual(POBLACION_MAX);
   });
 
+  it('los mineros huyen del peligro, entregan el oro y vuelven a trabajar', () => {
+    const b = new Batalla(1, () => MODOS.normal, nada, 9);
+    // Solo dos mineros: se quitan los soldados de ambos lados para aislar el caso.
+    b.unidades = b.unidades.filter((u) => u.tipo === 'minero' && u.lado === 'jugador');
+    for (const m of b.unidades) m.carga = 30;
+    const intruso = b.unidades[0];
+    const enemigo = { ...intruso, id: 999, lado: 'enemigo' as const, tipo: 'espadachin' as const, x: 16, carga: 0, vida: 1e6, vidaMax: 1e6 };
+    b.unidades.push(enemigo);
+    b.jugador.oro = 0;
+    for (let i = 0; i < 60 * 6; i++) { enemigo.x = 16; enemigo.cd = 99; b.actualizar(PASO); }
+    // Con el enemigo junto a las minas: refugiados detrás de la estatua y con el oro entregado.
+    const mineros = b.unidades.filter((u) => u.tipo === 'minero' && u.lado === 'jugador');
+    for (const m of mineros) expect(m.x).toBeLessThan(b.jugador.estatua.x);
+    expect(b.jugador.oro).toBeGreaterThanOrEqual(60);
+    // Se va el enemigo: vuelven a minar.
+    enemigo.viva = false;
+    for (let i = 0; i < 60 * 8; i++) b.actualizar(PASO);
+    expect(mineros.some((m) => m.estado === 'minar' || m.carga > 0)).toBe(true);
+  });
+
   it('la armadura reduce el daño', () => {
     expect(danoTrasArmadura(100, 0.35)).toBeCloseTo(65);
   });
