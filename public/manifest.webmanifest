@@ -1,9 +1,38 @@
 {
-  "name": "McL Stick War",
-  "short_name": "McL Stick War",
-  "start_url": "/",
-  "display": "fullscreen",
-  "background_color": "#000000",
-  "theme_color": "#000000",
-  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+    "name":  "McL Stick War",
+    "short_name":  "McL Stick War",
+    "description":  "Mina oro, entrena tu ejército y derriba la estatua enemiga.",
+    "lang":  "es",
+    "start_url":  "/",
+    "scope":  "/",
+    "display":  "fullscreen",
+    "orientation":  "landscape",
+    "background_color":  "#000000",
+    "theme_color":  "#000000",
+    "icons":  [
+                  {
+                      "purpose":  "any",
+                      "type":  "image/png",
+                      "sizes":  "192x192",
+                      "src":  "/icon-192.png"
+                  },
+                  {
+                      "purpose":  "any",
+                      "type":  "image/png",
+                      "sizes":  "512x512",
+                      "src":  "/icon-512.png"
+                  },
+                  {
+                      "purpose":  "maskable",
+                      "type":  "image/png",
+                      "sizes":  "512x512",
+                      "src":  "/icon-512.png"
+                  },
+                  {
+                      "purpose":  "any",
+                      "type":  "image/svg+xml",
+                      "sizes":  "any",
+                      "src":  "/favicon.svg"
+                  }
+              ]
 }
